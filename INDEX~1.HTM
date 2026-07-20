@@ -229,6 +229,9 @@ function findItem(ref){return CATALOG.find(c=>c.ref===ref)||null}
 function itemLabel(it){return it? `${it.nome} ${it.desc}`.trim() : ''}
 
 function handleCode(raw){
+  const s = String(raw).trim();
+  const mref = s.match(/^(?:REF[:\s]*)?(\d{3}\.\d{3})$/i);
+  if(mref){ addMov(mref[1], null); return; }   // QR interno (gaveta/kit) impresso na Niimbot
   const p = parseGS1(raw);
   if(!p || !p.gtin){ toast('Código não reconhecido como GS1','err'); return; }
   const known = gtinMap[p.gtin];
