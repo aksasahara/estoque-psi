@@ -546,7 +546,12 @@ function stopCam(){
   $('video').srcObject = null; $('vf').hidden = true; wakeOff();
   $('btnCam').textContent = '📷 Iniciar câmera'; $('scanState').textContent = 'Câmera parada';
 }
-$('btnCam').onclick = ()=> camOn ? stopCam() : startCam();
+let audioCtx = null;
+$('btnCam').onclick = ()=>{
+  // iOS só libera áudio criado durante um toque do usuário — criamos aqui e reutilizamos no bipe
+  try{ if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)(); audioCtx.resume(); }catch(e){}
+  camOn ? stopCam() : startCam();
+};
 function setModo(m){
   modo = m;
   $('modeSaida').className  = m==='saida'   ? 'btn' : 'btn sec';
@@ -608,11 +613,19 @@ async function flush(){
   }catch(e){}
   flushing = false; renderSync();
 }
+function normRef(r){ r=String(r||'').trim(); return /^\d{6}$/.test(r)? r.slice(0,3)+'.'+r.slice(3) : r; }
+function normGtin(g){ g=String(g||'').replace(/\D/g,''); return g? g.padStart(14,'0') : g; }
+function normKeys(o, fn){ const out={}; for(const k in (o||{})) out[fn(k)] = o[k]; return out; }
 async function pull(){
   if(!cfg.url || !navigator.onLine) return;
   try{
     const res = await api({action:'state'});
     if(res && res.ok){
+      res.movs = (res.movs||[]).map(m=>({...m, ref:normRef(m.ref), gtin:normGtin(m.gtin)}));
+      res.links = normKeys(res.links, normGtin);
+      for(const k in res.links) res.links[k] = {ref: normRef(res.links[k].ref)};
+      res.tot = normKeys(res.tot, normRef); res.saldos = normKeys(res.saldos, normRef); res.venc = normKeys(res.venc, normRef);
+      (res.extra||[]).forEach(e=>e.ref=normRef(e.ref));
       movs = (res.movs||[]).concat(outbox.filter(e=>e.t==='mov').map(e=>({ts:e.ts, ref:e.ref, nome:e.nome, qty:e.qty, gtin:e.gtin||null, lot:e.lot||null, exp:e.exp||null, tipo:e.tipo})));
       for(const g in (res.links||{})) if(!gtinMap[g]) gtinMap[g] = res.links[g];
       srvx = {tot:res.tot||{}, saldos:res.saldos||{}, venc:res.venc||{}, extra:res.extra||[]};
@@ -685,7 +698,7 @@ function toast(msg, cls){
 }
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function beep(){
-  try{ const ctx = new (window.AudioContext||window.webkitAudioContext)();
+  try{ const ctx = audioCtx || new (window.AudioContext||window.webkitAudioContext)();
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.frequency.value = 1200; o.connect(g); g.connect(ctx.destination);
     g.gain.setValueAtTime(.15, ctx.currentTime); g.gain.exponentialRampToValueAtTime(.001, ctx.currentTime+.12);
