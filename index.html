@@ -127,6 +127,9 @@ h2.sec{font-size:14px;color:var(--mut);font-weight:700;text-transform:uppercase;
   <section id="tab-order" hidden>
     <div class="card">
       <h2 class="sec">Pedido de reposição</h2>
+      <button class="btn ghost" id="btnAddExtra">＋ Adicionar item extra ao pedido</button>
+      <div class="small" id="extraCap" style="margin:6px 0" hidden>Itens extras (não é reposição de consumo):</div>
+      <div id="extraList"></div>
       <div class="small" style="margin-bottom:6px">Toque no texto para editar antes de enviar:</div><pre id="pedidoTxt" contenteditable="true"></pre>
       <button class="btn" id="btnWhats">Enviar por WhatsApp</button>
       <button class="btn sec" id="btnCopy">Copiar texto</button>
@@ -205,6 +208,20 @@ let cfg = load(LS.cfg, {url:'', nome:''});
 let outbox = load(LS.out, []);   // eventos aguardando envio ao Google Sheets
 let srvx = load('ieep_srvx', null); // tot/saldos/venc/extra vindos da planilha
 let modo = 'saida';                 // modo do scanner: saida | entrada
+let extras = load('ieep_extras', []); // itens extras do pedido (não são reposição de consumo) — zerados ao fechar módulo
+function saveExtras(){ localStorage.setItem('ieep_extras', JSON.stringify(extras)); }
+function addExtra(item){
+  const match = extras.find(e => item.ref ? e.ref===item.ref : (!e.ref && e.nome===item.nome));
+  if(match) match.qty += 1; else extras.push({ref:item.ref||null, nome:item.nome, qty:1});
+  saveExtras(); renderOrder();
+  toast('＋ '+item.nome+' adicionado ao pedido','ok');
+}
+function adjustExtra(i, d){
+  if(!extras[i]) return;
+  extras[i].qty += d;
+  if(extras[i].qty<=0) extras.splice(i,1);
+  saveExtras(); renderOrder();
+}
 function mergeExtra(){
   if(!srvx || !srvx.extra) return;
   for(const e of srvx.extra) if(!findItem(e.ref)) CATALOG.push({ref:e.ref, nome:e.nome, desc:e.desc});
@@ -394,38 +411,91 @@ function orderText(){
   const d = new Date();
   const mes = d.toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
   let t = `*Pedido de reposição – IEEP Implantodontia*\n_Prótese sobre Implante · módulo ${mes}_\n\n`;
-  if(!g.length) return t + '(nenhum item a repor)';
+  if(!g.length && !extras.length) return t + '(nenhum item a repor)';
   for(const x of g) t += `• ${x.qty}x  REF ${x.ref} – ${x.nome}` + (x.base==='mínimo'? ' *' : '') + `\n`;
-  t += `\nTotal: ${g.reduce((a,x)=>a+x.qty,0)} componentes (${g.length} itens)`;
+  if(extras.length){
+    t += (g.length? '\n':'') + `*Itens adicionais (não é reposição de consumo):*\n`;
+    for(const e of extras) t += `• ${e.qty}x  ${e.ref? 'REF '+e.ref+' – ':''}${e.nome}\n`;
+  }
+  const totalQ = g.reduce((a,x)=>a+x.qty,0) + extras.reduce((a,x)=>a+x.qty,0);
+  const totalI = g.length + extras.length;
+  t += `\nTotal: ${totalQ} componentes (${totalI} itens)`;
   if(g.some(x=>x.base==='mínimo')) t += `\n_* calculado pelo estoque mínimo_`;
   return t;
 }
 function pedidoAtual(){ return $('pedidoTxt').textContent; }
 function renderOrder(){
   $('pedidoTxt').textContent = orderText();
+  $('extraCap').hidden = extras.length===0;
+  $('extraList').innerHTML = extras.map((e,i)=>`
+    <div class="itemline"><div class="iinfo">
+      <div class="iname">${esc(e.nome)}</div>
+      <div class="iref">${e.ref? 'REF '+e.ref : 'item avulso (fora do catálogo)'}</div>
+    </div>
+    <div class="qty">
+      <button data-i="${i}" data-d="-1" class="exadj">−</button>
+      <span class="n">${e.qty}</span>
+      <button data-i="${i}" data-d="1" class="exadj">＋</button>
+    </div></div>`).join('');
+  $('extraList').querySelectorAll('.exadj').forEach(b=>b.onclick=()=>adjustExtra(+b.dataset.i, +b.dataset.d));
   $('histCard').hidden = hist.length===0;
   $('histList').innerHTML = hist.map((h,i)=>`
     <div class="itemline"><div class="iinfo"><div class="iname">${esc(h.label)}</div>
     <div class="iref">${h.items} itens · ${h.total} componentes</div></div>
     <button class="qty" style="border:none;background:var(--azulp);border-radius:10px;padding:8px 10px;color:var(--roxo);cursor:pointer" onclick="copyHist(${i})">copiar</button></div>`).join('');
 }
+function openExtraPicker(){
+  lockScroll();
+  const div = document.createElement('div'); div.className='modal';
+  div.innerHTML = `<div class="mbox">
+    <h3>Adicionar item ao pedido</h3>
+    <div class="msub">Item extra — não é reposição de consumo deste módulo</div>
+    <input type="search" placeholder="Buscar por nome, REF ou tamanho…" id="exSearch">
+    <div class="mlist" id="exList"></div>
+    <button class="btn ghost" style="margin-top:10px" id="exFree">✎ Não está na lista — adicionar por nome</button>
+    <button class="btn sec" style="margin-top:8px" id="exCancel">Cancelar</button>
+  </div>`;
+  document.body.appendChild(div);
+  const render = q=>{
+    q=(q||'').toLowerCase();
+    div.querySelector('#exList').innerHTML = CATALOG
+      .filter(c=>!q||(c.ref+' '+c.nome+' '+c.desc).toLowerCase().includes(q)).slice(0,60)
+      .map(c=>`<div class="opt" data-ref="${c.ref}"><div class="iname">${esc(c.nome)} ${esc(c.desc)}</div><div class="iref">REF ${c.ref}</div></div>`).join('');
+    div.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{
+      const it = findItem(o.dataset.ref); unlockScroll(); document.body.removeChild(div);
+      addExtra({ref:it.ref, nome:itemLabel(it)});
+    });
+  };
+  render('');
+  div.querySelector('#exSearch').oninput = e=>render(e.target.value);
+  div.querySelector('#exFree').onclick = ()=>{
+    const txt = prompt('Nome do item (ex.: componente novo, instrumento, etc.):');
+    unlockScroll(); document.body.removeChild(div);
+    if(txt && txt.trim()) addExtra({ref:null, nome:txt.trim()});
+  };
+  div.querySelector('#exCancel').onclick = ()=>{ unlockScroll(); document.body.removeChild(div); };
+  setTimeout(()=>div.querySelector('#exSearch').focus(), 50);
+}
+$('btnAddExtra').onclick = openExtraPicker;
 window.copyHist = i=>{ navigator.clipboard.writeText(hist[i].text); toast('Pedido copiado','ok'); };
 
 $('btnWhats').onclick = ()=>{ window.open('https://wa.me/?text='+encodeURIComponent(pedidoAtual())); };
 $('btnCopy').onclick = ()=>{ navigator.clipboard.writeText(pedidoAtual()).then(()=>toast('Copiado ✔','ok')); };
 $('btnCsv').onclick = ()=>{
-  const g = grouped('saida');
-  let csv = 'REF;Item;Quantidade;Lotes\n';
-  for(const x of g) csv += `${x.ref};"${x.nome}";${x.qty};"${x.lots.join(', ')}"\n`;
+  const consumo = {}; for(const x of grouped('saida')) consumo[x.ref]=x.lots;
+  const g = sugestaoPedido();
+  let csv = 'REF;Item;Quantidade;Origem;Lotes\n';
+  for(const x of g) csv += `${x.ref};"${x.nome}";${x.qty};"${x.base==='mínimo'?'estoque mínimo':'consumo'}";"${(consumo[x.ref]||[]).join(', ')}"\n`;
+  for(const e of extras) csv += `${e.ref||''};"${e.nome}";${e.qty};"extra";""\n`;
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob(["﻿"+csv],{type:'text/csv'}));
   a.download = 'pedido-ieep.csv'; a.click();
 };
 $('btnClose').onclick = async ()=>{
-  const g = grouped('saida'); if(!g.length && !grouped('entrada').length){ toast('Nada para fechar','err'); return; }
+  const g = grouped('saida'); if(!g.length && !grouped('entrada').length && !extras.length){ toast('Nada para fechar','err'); return; }
   if(!confirm('Fechar o módulo? A contagem atual será arquivada e zerada' + (cfg.url? ' PARA TODOS os aparelhos conectados.' : '.'))) return;
-  const arquivo = {label:'Módulo fechado em '+new Date().toLocaleDateString('pt-BR'), items:g.length,
-    total:g.reduce((a,x)=>a+x.qty,0), text:pedidoAtual()};
+  const arquivo = {label:'Módulo fechado em '+new Date().toLocaleDateString('pt-BR'), items:g.length+extras.length,
+    total:g.reduce((a,x)=>a+x.qty,0)+extras.reduce((a,x)=>a+x.qty,0), text:pedidoAtual()};
   if(cfg.url){
     await flush();
     if(outbox.length){ toast('Há registros não sincronizados — conecte à internet e tente de novo','err'); return; }
@@ -435,7 +505,7 @@ $('btnClose').onclick = async ()=>{
     }catch(e){ toast('Erro ao fechar no servidor: '+e.message,'err'); return; }
   }
   hist.unshift(arquivo);
-  movs = []; save(); renderAll(); renderOrder(); toast('Módulo fechado ✔','ok');
+  movs = []; extras = []; saveExtras(); save(); renderAll(); renderOrder(); toast('Módulo fechado ✔','ok');
   if(cfg.url) pull();
 };
 
