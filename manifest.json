@@ -1,0 +1,9 @@
+{
+  "name": "Controle de Estoque - PSI · IEEP",
+  "short_name": "Estoque PSI",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#24408e",
+  "icons": [{ "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png" }]
+}
