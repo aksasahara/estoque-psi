@@ -60,6 +60,20 @@ pre#pedidoTxt{white-space:pre-wrap;font-family:inherit;font-size:14px;background
 .lots{font-size:12px;color:var(--mut);margin-top:3px}
 h2.sec{font-size:14px;color:var(--mut);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin:4px 0 8px}
 .tag-exp{color:var(--warn);font-weight:600}
+.confirm-pop{position:fixed;top:42%;left:50%;width:88px;height:88px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;font-size:42px;color:#fff;z-index:70;
+  pointer-events:none;opacity:0;transform:translate(-50%,-50%) scale(.4);
+  animation:popIn .7s cubic-bezier(.34,1.56,.64,1) forwards;box-shadow:0 6px 24px rgba(0,0,0,.25)}
+.confirm-pop.saida{background:var(--roxo)}
+.confirm-pop.entrada{background:var(--lar)}
+@keyframes popIn{
+  0%{opacity:0;transform:translate(-50%,-50%) scale(.4)}
+  25%{opacity:1;transform:translate(-50%,-50%) scale(1.18)}
+  40%{transform:translate(-50%,-50%) scale(.94)}
+  55%{transform:translate(-50%,-50%) scale(1)}
+  78%{opacity:1}
+  100%{opacity:0;transform:translate(-50%,-50%) scale(1)}
+}
 </style>
 </head>
 <body>
@@ -271,6 +285,14 @@ function addMov(ref, p, tipo){
   save(); renderAll(); scheduleFlush();
   toast((tipo==='entrada'? '📦 ENTRADA · ' : '✔ ') + nome + (p?.lot? ` · lote ${p.lot}`:''), 'ok');
   beep();
+  confirmPop(tipo);
+}
+function confirmPop(tipo){
+  const d = document.createElement('div');
+  d.className = 'confirm-pop ' + (tipo==='entrada' ? 'entrada' : 'saida');
+  d.textContent = tipo==='entrada' ? '📦' : '✓';
+  document.body.appendChild(d);
+  setTimeout(()=>d.remove(), 700);
 }
 function saldoAtual(ref){
   if(!srvx || !srvx.saldos || !(ref in srvx.saldos)) return null;
@@ -446,7 +468,20 @@ function linkedBadge(ref){
 $('itemSearch').oninput = e=>renderItems(e.target.value);
 
 /* picker modal */
+let _scrollY = 0;
+function lockScroll(){
+  _scrollY = window.scrollY || document.documentElement.scrollTop || 0;
+  document.body.style.position = 'fixed';
+  document.body.style.top = (-_scrollY) + 'px';
+  document.body.style.left = '0'; document.body.style.right = '0';
+}
+function unlockScroll(){
+  document.body.style.position = ''; document.body.style.top = '';
+  document.body.style.left = ''; document.body.style.right = '';
+  window.scrollTo(0, _scrollY);
+}
 function openPicker(cb, subtitle){
+  lockScroll();
   const div = document.createElement('div'); div.className='modal';
   div.innerHTML = `<div class="mbox">
     <h3>Selecionar item</h3>
@@ -462,12 +497,13 @@ function openPicker(cb, subtitle){
       .filter(c=>!q||(c.ref+' '+c.nome+' '+c.desc).toLowerCase().includes(q)).slice(0,60)
       .map((c,i)=>`<div class="opt" data-ref="${c.ref}"><div class="iname">${esc(c.nome)} ${esc(c.desc)}</div><div class="iref">REF ${c.ref}</div></div>`).join('');
     div.querySelectorAll('.opt').forEach(o=>o.onclick=()=>{
-      const it = findItem(o.dataset.ref); document.body.removeChild(div); cb(it);
+      const it = findItem(o.dataset.ref); unlockScroll(); document.body.removeChild(div); cb(it);
     });
   };
   render('');
   div.querySelector('#pkSearch').oninput = e=>render(e.target.value);
-  div.querySelector('#pkCancel').onclick = ()=>document.body.removeChild(div);
+  div.querySelector('#pkCancel').onclick = ()=>{ unlockScroll(); document.body.removeChild(div); };
+  setTimeout(()=>div.querySelector('#pkSearch').focus(), 50);
 }
 $('btnPick').onclick = ()=>openPicker(it=>addMov(it.ref,null));
 $('btnPick2').onclick = ()=>openPicker(it=>addMov(it.ref,null,'saida'));
